@@ -1,6 +1,6 @@
 ---
 title: "STAT 574 FINAL PROJECT"
-author: "dana"
+author: "dana v"
 date: "4/6/2023"
 output: html_document
 ---

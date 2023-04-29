@@ -1,0 +1,339 @@
+---
+title: "STAT 574 FINAL PROJECT"
+author: "dana"
+date: "4/6/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(wordcloud)
+library(wordcloud2)
+library(xgboost)
+library(GGally)
+```
+
+
+# READ IN + CLEAN DATA
+
+```{r read}
+
+data_science = read_csv('C:/Users/dsquib/Desktop/top dataset.csv')
+
+sum(is.na(data_science))
+
+data_science = na.omit(data_science)
+
+#data_science = data_science %>% dplyr:: select(-c('job title', 'description_len', 'company_revenue'))
+
+
+```
+
+
+```{r 1 } 
+
+textmine = data_science %>% dplyr:: select(c('job description', 'location', 'salary estimate', 'company', 'job_simpl', 'seniority'))
+
+```
+
+
+
+# EDA 
+
+
+```{r eda}
+
+data_science = read_csv('C:/Users/dsquib/Desktop/top dataset.csv')
+
+sum(is.na(data_science))
+
+data_science = na.omit(data_science)
+
+data_science = data_science %>% mutate(seniority = case_when(seniority=='Senior' ~ 3,
+                                          seniority=='mid' ~ 2, seniority=='junior'  ~ 1))
+
+data_science = data_science %>% mutate(job_simpl = case_when(job_simpl == 'data scientist' ~ 5, job_simpl == 'data analyst' ~ 4, job_simpl == 'data engineer' ~ 3, job_simpl == 'machine learning engineer' ~ 2, job_simpl== 'other' ~ 1))
+
+summary(data_science)
+
+# seniority : senior (887), mid (246), junior (239)
+
+datasci = data_science %>% arrange(desc(`salary estimate`)) %>% dplyr::select(-c(company, company_founded, location, `job description`, company_industry, company_type, company_sector, company_size, `job title`, company_revenue))
+
+textmine = data_science %>% dplyr:: select(c('job description', 'location', 'salary estimate', 'company', 'job_simpl', 'seniority'))
+
+ggplot(textmine, aes(x=seniority)) + geom_histogram(stat='count', fill='blue')
+
+hourly = table(textmine$job_simpl)
+hourly
+
+```
+
+# SPLIT TRAIN AND TEST 
+
+```{r train test}
+
+library(tree)
+library(rpart.plot)
+
+n = nrow(datasci)
+prop=.8
+
+train_id = sample(1:n, size=round(prop*n), replace=FALSE)
+test_id = (1:n)[-which(1:n %in% train_id)]
+train = datasci[train_id, ]
+test = datasci[test_id, ]
+
+
+```
+
+
+# RANDOM FOREST 
+
+```{r rf}
+
+library(randomForest)
+library(caret)
+
+set.seed(123)
+p = ncol(datasci) - 1
+randfor = randomForest(`salary estimate`~., data=train, mtry=p, maxnodes=30, importance=TRUE)
+
+print(importance(randfor,type=2))
+varImpPlot(randfor, main = 'Variable Importance')
+
+rf_salary = predict(randfor, newdata=test)
+
+acc_10 = ifelse(abs(test$`salary estimate`-rf_salary) < .10*test$`salary estimate`, 1,0)
+acc_15 = ifelse(abs(test$`salary estimate`-rf_salary) < .15*test$`salary estimate`, 1,0)
+acc_20 = ifelse(abs(test$`salary estimate`-rf_salary) < .20*test$`salary estimate`, 1,0)
+
+mean(acc_10)
+mean(acc_15)
+mean(acc_20)
+
+# inc node purity 
+
+
+
+```
+
+```{r xgboost}
+
+train_x = data.matrix(train[-1])
+train_y = data.matrix(train[1])
+test_x = data.matrix(test[-1])
+test_y = data.matrix(test[1])
+
+xg = xgboost(data=train_x, label=train_y, max.depth=32, eta=.03, subsample=1, colsample_bytree=1, nrounds=1000, objective="reg:squarederror")
+
+#print(xgb.importance(colnames(train_x), model=xg))
+
+pred.y = predict(xg, test_x)
+
+accuracy_10 = ifelse(abs(test_y-pred.y)<.10*test_y, 1,0)
+
+accuracy_15 = ifelse(abs(test_y-pred.y)<.15*test_y, 1,0)
+
+accuracy_20 = ifelse(abs(test_y-pred.y)<.20*test_y, 1,0)
+
+print(sum(accuracy_10)/length(accuracy_10))
+print(sum(accuracy_15)/length(accuracy_15))
+print(sum(accuracy_20)/length(accuracy_20))
+
+
+```
+
+
+```{r accuracy}
+
+accuracy_10 = ifelse(abs(test_y-pred.y)<.10*test_y, 1,0)
+
+accuracy_15 = ifelse(abs(test_y-pred.y)<.15*test_y, 1,0)
+
+accuracy_20 = ifelse(abs(test_y-pred.y)<.20*test_y, 1,0)
+
+print(sum(accuracy_10)/length(accuracy_10))
+print(sum(accuracy_15)/length(accuracy_15))
+print(sum(accuracy_20)/length(accuracy_20))
+
+
+imp_xg = xgb.importance(colnames(train_x), model=xg)
+
+xgb.ggplot.importance(imp_xg,rel_to_first = TRUE, xlab='Relative Importance')
+```
+
+
+
+
+# TEXT MINING 
+
+
+```{r text mining }
+
+library(stringi)
+
+# tidy data 
+
+textmine = textmine %>% arrange(desc(`salary estimate`))
+
+companies_ds = data_science %>% filter(`salary estimate` >= 90000) %>% dplyr:: select(company, `salary estimate`, job_simpl) 
+
+companies_ds$company = stri_replace_all_regex(companies_ds$company, pattern=c('Inc.', 'N.A.', ',', 'LLC', '-', '/', '\\.', 'INC'), replacement=c('', '', '', '', '', '', '', ''), vectorize=FALSE)
+
+companies_ds = textmine %>% mutate(seniority = case_when(seniority==3 ~ 'Senior',
+                                          seniority==2 ~ 'mid', seniority==1  ~ 'junior'))
+
+companies_ds = textmine %>% mutate(job_simpl = case_when(job_simpl == 5 ~ 'data scientist', job_simpl == 4 ~'data analyst', job_simpl == 3~ 'data engineer', job_simpl == 2 ~ 'machine learning engineer', job_simpl== 1 ~'other'))
+
+
+# find out how to do this in one line instead of separately .
+
+
+#job_other = companies_ds %>% filter(job_simpl=='other')
+job_ds = companies_ds %>% filter(job_simpl=='data scientist')
+job_da = companies_ds %>% filter(job_simpl=='data analyst')
+job_mle = companies_ds %>% filter(job_simpl=='machine learning engineer')
+job_de = companies_ds %>% filter(job_simpl=='data engineer')
+
+# sort by number of positions for each company 
+
+companies_ds_count = companies_ds %>% count(company, sort=TRUE)
+#other_count = job_other %>% count(company, sort=TRUE)
+ds_count = job_ds %>% count(company, sort=TRUE)
+da_count = job_da %>% count(company, sort=TRUE)
+de_count = job_de %>% count(company, sort=TRUE)
+mle_count = job_mle %>% count(company, sort=TRUE)
+
+# plot geom col of frequency for visualization for each of the 5 positions 
+
+#other_count %>% slice_max(order_by = n, n=5) %>% ggplot(aes(n, reorder(company, n))) + geom_col(show.legend = FALSE, fill='firebrick') + labs(x=NULL, y=NULL, title='Top Paying Companies for Other') + theme_minimal()
+
+ds_count %>% slice_max(order_by = n, n=10) %>% ggplot(aes(n, reorder(company, n))) + geom_col(show.legend = FALSE, fill='wheat1') + labs(x=NULL, y=NULL, title='Top Paying Companies for Data Scientist') + theme_minimal()
+
+da_count %>% slice_max(order_by = n, n=10) %>% ggplot(aes(n, reorder(company, n))) + geom_col(show.legend = FALSE, fill='peru') + labs(x=NULL, y=NULL, title='Top Paying Companies for Data Analyst') + theme_minimal()
+
+de_count %>% slice_max(order_by = n, n=10) %>% ggplot(aes(n, reorder(company, n))) + geom_col(show.legend = FALSE, fill='bisque3') + labs(x=NULL, y=NULL, title='Top Paying Companies for Data Engineer') + theme_minimal()
+
+mle_count %>% slice_max(order_by = n, n=10) %>% ggplot(aes(n, reorder(company, n))) + geom_col(show.legend = FALSE, fill='tan4') + labs(x=NULL, y=NULL, title='Top Paying Companies for Machine Learning Engineer') + theme_minimal()
+
+mle_count = mle_count[-46, ]
+
+companies_ds_count %>% slice_max(order_by = n, n=10) %>% ggplot(aes(n, reorder(company, n))) + geom_col(show.legend = FALSE, fill='rosybrown3') + labs(x=NULL, y=NULL, title='Top Paying Companies for Data Science') + theme_minimal()
+
+
+# word cloud generation 
+
+set.seed(123)
+#companies_ds_count %>% with(wordcloud(company, n, max.words = 100, random.order = FALSE, colors = brewer.pal(8, "Dark2")))
+
+wordcloud2(head(companies_ds_count, 100), shape='circle', size = .75, backgroundColor = 'rosybrown1', fontFamily = 'Times New Roman', color = 'random-light')
+
+#wordcloud2(companies_ds_count, figPath = "C:/Users/dsquib/Downloads/NicePng_mlg-420-png_1807341.png", size = 1.5,color = "black")
+
+```
+
+
+
+
+
+
+```{r q}
+wordcloud2(head(ds_count, 100), shape='circle', size = .7, backgroundColor = 'gray', fontFamily = 'Times New Roman', color = 'random-light')
+```
+
+
+
+```{r w}
+wordcloud2(head(da_count, 100), shape='circle', size = .7, backgroundColor = 'gray', fontFamily = 'Times New Roman', color = 'random-light')
+```
+
+
+
+```{r e}
+wordcloud2(head(de_count, 100), shape='circle', size = .7, backgroundColor = 'gray', fontFamily = 'Times New Roman', color = 'random-light')
+
+wordcloud2(head(mle_count, 100), shape='circle', size = .7, backgroundColor = 'gray', fontFamily = 'Times New Roman', color = 'random-light')
+```
+
+
+
+
+# final histogram 
+
+
+```{r}
+
+#make a histogram of all jobs with high paying jobs to visualize 
+
+new1 = table(companies_ds$job_simpl)
+
+new1 = as.data.frame(new1)
+
+new1 = new1 %>% rename(job_type = Var1)
+
+new1 %>% ggplot(aes(Freq, reorder(job_type, Freq))) + geom_col(show.legend = FALSE, fill='darkviolet') + labs(x=NULL, y=NULL, title='Salaries over 90k') + theme_light()
+
+```
+
+
+# job description text mining + location
+
+
+```{r job desc}
+
+library(tm)
+library(SnowballC)
+#library(stopwords)
+
+text_new = textmine %>% select(`job description`, location, `salary estimate`) %>% filter(`salary estimate` >= 90000)
+
+text_new = text_new %>% mutate(location = gsub(".{3}$", "", location)) # works but cuts off remote how to fix 
+
+text_new = text_new %>% mutate(location = gsub(",", "", location))
+
+loc_tex = text_new %>% filter(`salary estimate`>=90000) %>% select(location)
+
+loc_tex = loc_tex %>% count(location, sort = TRUE)
+
+loc_tex %>% slice_max(order_by = n, n=10) %>% ggplot(aes(n, reorder(location, n))) + geom_col(show.legend =FALSE, fill='darkorange4') + labs(x=NULL, y=NULL, title='Top Paying Locations for Data Science') + theme_minimal()
+
+wordcloud2(head(loc_tex, 100), shape='circle', backgroundColor='moccasin', size=1)
+
+
+```
+
+
+# job description
+
+```{r descript}
+
+library(tidytext)
+
+descript = textmine %>% select(`job description`)
+
+descript = as_tibble(descript)
+
+descript = descript %>%  mutate(across(everything(), ~gsub("[[:punct:]]", "", .)))
+
+data(stop_words)
+
+text = descript %>% unnest_tokens(word, `job description`) %>% anti_join(stop_words) %>% count(word, sort=TRUE) %>% filter(n>=100)
+
+text %>% slice_max(order_by = n , n=25) %>% ggplot(aes(n, reorder(word, n))) + geom_col(show.legend = FALSE, fill='wheat') + labs(y = NULL)
+
+wordcloud2(head(text, 500), shape='square', backgroundColor='moccasin', size=.6)
+
+```
+
+
+
+
+
+
+
+

@@ -1,1 +1,3 @@
-# squib
+# Data Mining Final Project
+---
+
